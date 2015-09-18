@@ -1,0 +1,68 @@
+// ---------------------------------------------------------------------------
+#include "FileCheck.h"
+#include "main.h"
+#include "functions.h"
+#include <vcl.h>
+#include <stdio.h>
+#pragma hdrstop
+
+#pragma package(smart_init)
+// ---------------------------------------------------------------------------
+
+// Important: Methods and properties of objects in VCL can only be
+// used in a method called using Synchronize, for example:
+//
+// Synchronize(&UpdateCaption);
+//
+// where UpdateCaption could look like:
+//
+// void __fastcall FileCheck::UpdateCaption()
+// {
+// Form1->Caption = "Updated in a thread";
+// }
+// ---------------------------------------------------------------------------
+
+__fastcall FileCheck::FileCheck(bool CreateSuspended) : TThread(CreateSuspended)
+{
+}
+
+// ---------------------------------------------------------------------------
+void __fastcall FileCheck::Execute()
+{
+	NameThreadForDebugging("FileCheck");
+	// ---- Place thread code here ----
+	Synchronize(Do);
+}
+
+void __fastcall FileCheck::Do(void)
+{
+	HANDLE hf;
+
+	char f[MAX_PATH];
+	char fn[MAX_PATH];
+
+	if (!Form1->filelist->Selected)
+		return;
+	deunicode(Form1->filelist->Selected->Caption.c_str(), f, sizeof(f));
+	sprintf(fn, "y:\\%s", f);
+	hf = CreateFile(fn, GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, 0);
+	if (hf == INVALID_HANDLE_VALUE)
+	{
+		deb("createfile failed: %s", fmterr());
+		return;
+	}
+	DWORD fsize;
+	fsize = GetFileSize(hf, 0);
+	char c;
+	DWORD dwRead;
+	DWORD stms = GetTickCount();
+	while ((unsigned long)fsize--)
+	{
+		// deb("left %lu",fsize);
+		ReadFile(hf, &c, 1L, &dwRead, 0);
+
+	}
+	CloseHandle(hf);
+	deb("FileCheck(%s) done %.2f sec", fn, (double)((double)GetTickCount() - (double)stms) / 1000);
+}
+// ---------------------------------------------------------------------------

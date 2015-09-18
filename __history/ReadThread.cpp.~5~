@@ -1,0 +1,85 @@
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+#include "FileCheck.h"
+#include "main.h"
+#include "functions.h"
+
+#include <stdio.h>
+#include <vcl.h>
+#pragma hdrstop
+
+#include "ReadThread.h"
+#pragma package(smart_init)
+// ---------------------------------------------------------------------------
+
+// Important: Methods and properties of objects in VCL can only be
+// used in a method called using Synchronize, for example:
+//
+// Synchronize(&UpdateCaption);
+//
+// where UpdateCaption could look like:
+//
+// void __fastcall ReadThread::UpdateCaption()
+// {
+// Form1->Caption = "Updated in a thread";
+// }
+// ---------------------------------------------------------------------------
+
+__fastcall ReadThread::ReadThread(bool CreateSuspended) : TThread(CreateSuspended)
+{
+}
+
+// ---------------------------------------------------------------------------
+void __fastcall ReadThread::Execute()
+{
+	NameThreadForDebugging("ReadThread");
+	unsigned long size = rand() * (rand() % 117);
+
+	HANDLE fh;
+	WIN32_FIND_DATAA fd;
+
+	memset(&fd, 0x0, sizeof(fd));
+	fh = FindFirstFileA("y:\\*.*", &fd);
+
+	if (fh == INVALID_HANDLE_VALUE)
+	{
+		deb("no  found");
+		return;
+	}
+
+	int nfiles = 0;
+	char fn[MAX_PATH];
+	int nloaded = 0;
+	do
+	{
+		if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+			continue;
+
+		try
+		{
+			char src[255];
+			char dest[255];
+
+			sprintf(src, "y:\\%s", fd.cFileName);
+			sprintf(dest, "c:\\temp\\%s", fd.cFileName);
+
+			deb("copying %20s %lu bytes ...", src, fd.nFileSizeLow);
+			DWORD st = GetTickCount();
+			if (!CopyFile(src, dest, 0))
+				deb("CopyFile(%s, %s): %s", src, dest, fmterr());
+			else
+				deb("copy %lu bytes of %s OK in %d ms", fd.nFileSizeLow, src, GetTickCount() - st);
+
+			nfiles++;
+		}
+
+		catch(...)
+		{
+			deb("plugins code exception catched on %s", fn);
+		}
+	}
+	while (FindNextFileA(fh, &fd));
+	deb("done read %d files", nfiles);
+}
+// ---------------------------------------------------------------------------

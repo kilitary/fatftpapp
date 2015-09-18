@@ -1,0 +1,526 @@
+// ---------------------------------------------------------------------------
+
+#include <vcl.h>
+#include <vector>
+#include "main.h"
+#include "../fatftp/ff.h"
+#include "functions.h"
+#pragma hdrstop
+
+#include "EventThread.h"
+#pragma package(smart_init)
+
+using namespace std;
+extern vector<FATEVENT>events;
+extern TCriticalSection *evcs;
+
+extern bool showftptraff;
+extern bool showedeb;
+extern bool stopftpthread;
+extern bool showcachedeb;
+extern bool showevents;
+extern bool showdev;
+extern bool formshown;
+extern int pasvconnecttm;
+extern unsigned long ntmt;
+extern unsigned long tmtsum;
+extern unsigned long tmt;
+extern double memmb;
+FATEVENT e;
+double netspd;
+
+__fastcall EventThread::EventThread(bool CreateSuspended) : TThread(CreateSuspended)
+{
+	evcs = new TCriticalSection();
+	needevents = false;
+}
+
+bool sortevents(const FATEVENT fe1, const FATEVENT fe2)
+{
+	// if (fe1.id && fe2.id)
+	// return fe1.id < fe2.id;
+	// else
+	// return fe1.timearrive.QuadPart < fe2.timearrive.QuadPart;
+	return fe1.id < fe2.id;
+}
+
+// ---------------------------------------------------------------------------
+void __fastcall EventThread::Execute()
+{
+	NameThreadForDebugging("EventThread");
+
+	Priority = tpHigher;
+
+	deb("event thread running %x", GetCurrentThreadId());
+
+	while (true)
+	{
+		// if (events.size() >= 1000)
+		// {
+		//
+		// int oldsize = events.size();
+		// events.erase(events.begin() + 100, events.end());
+		// int newsize = events.size();
+		// deb("truncated %d events!", oldsize - newsize);
+		// }
+		if (events.empty())
+		{
+
+			Sleep(50);
+
+			continue;
+		}
+
+		eventslock();
+
+		// fdeb("sort events ...");
+		// DWORD sorttime = GetTickCount();
+		//
+		// // sort(events.begin(), events.end(), sortevents);
+		//
+		// if (GetTickCount() - sorttime >= 200)
+		// deb("WARNING sort in %d ms", GetTickCount() - sorttime);
+		// fdeb("extracting events, size=%d ...", events.size());
+		e = events.front();
+		events.erase(events.begin());
+		eventsunlock();
+
+		// deb("extracted:");
+		// deb("  type: %d arg %p (%s) arg2 %d arg3 %d", e.type, e.arg,
+		// e.type == (int) - 1 ? (char*)e.arg : "hz", e.arg2, e.arg3);
+		// events.pop_back();
+
+		// fdeb("removed event, left: %d", events.size());
+
+		// evcs->Leave();
+		// fdeb("processing event %04d id: %05d arrived - %3d ms, arg %08x, arg2 %08x", e.type, e.id,
+		// GetTickCount() - e.timearrive.HighPart, e.arg, e.arg2);
+		// Do();
+		Synchronize(Do);
+
+		// fdeb("done process event %d", e.type);
+		// Application->ProcessMessages();
+		// it = events.erase(it);
+		// if (it == events.end())
+		// break;
+
+	}
+
+}
+
+void __fastcall EventThread::Do(void)
+{
+	unsigned long st, en;
+	static int num = 0;
+	AnsiString s;
+	num++;
+	static double spd = 0;
+	double bytesin = 0;
+	static DWORD checktime = 0;
+	static double minusbytes = 0;
+	double x;
+	static DWORD tmctm = 0, netspdtm = 0;
+	try
+	{
+		static DWORD x = GetTickCount();
+		static bool curd = false;
+		if (GetTickCount() - x >= 1000)
+		{
+			curd = !curd;
+			// Form1->deblog->Perform(WM_SETREDRAW, 1, 0);
+			// Application->ProcessMessages();
+			// Form1->deblog->Perform(WM_SETREDRAW, 0, 0);
+			x = GetTickCount();
+		}
+
+		char numev[222];
+		sprintf(numev, "%d ", events.size());
+		if (netspd >= 1.5)
+			sprintf(numev + strlen(numev), "[%.2f]", netspd);
+		// Form1->numevents->Caption = numev;
+		Form1->Caption = numev;
+		// OutputDebugString("EventThread Do()");
+		int type = e.type;
+		LPVOID arg = e.arg;
+		LPVOID arg2 = e.arg2;
+		LPVOID arg3 = e.arg3;
+		LPVOID arg4 = e.arg4;
+		LPVOID arg5 = e.arg5;
+		LPVOID arg6 = e.arg6;
+		LPVOID arg7 = e.arg7;
+		LPVOID arg8 = e.arg8;
+		DWORD thread = e.thread;
+		LARGE_INTEGER arrivetime = e.timearrive;
+
+		// fdeb("do type=%d arrive %I64d %s", type, arrivetime.QuadPart, type <= 0 ? (char*)arg : "");
+
+		ff_NetSpeed(&bytesin);
+		if (type != E_DEB)
+		{
+
+			if (GetTickCount() - checktime >= 1000)
+			{
+
+				minusbytes = (bytesin);
+				checktime = GetTickCount();
+			}
+
+			if (GetTickCount() - netspdtm >= 350)
+			{
+
+				char sspd[111];
+				spd = (double)((double)bytesin - (double)minusbytes) / (double)1024.0;
+				sprintf(sspd, "%.2f", spd);
+				Form1->netspd->Text = sspd;
+
+				netspdtm = GetTickCount();
+			}
+
+		}
+
+		if (showevents && type >= 0)
+			deb("EVENT (  %3d, %8u, %8u, %3u, %3u, %3u, %3u, %3u  )", type, arg, arg2, arg3, arg4, arg5,
+			arg6, arg7);
+
+		switch(type)
+		{
+
+		case E_FTPSAVEFILE:
+			// if(showedeb)
+			// deb("FTPSAVEFILE %20s %5lu @ %8lu) %8lu (%s)", arg, arg3, arg4, arg5, arg6);
+			HeapFree(GetProcessHeap(), 0, arg);
+			break;
+
+		case E_DEB:
+			try
+			{
+				// OutputDebugString("okey");
+				if (showedeb)
+					deb("%s", (char*)arg);
+
+				// fdeb("freeing %p [%d bytes]", arg, (int)arg2);
+				// fdeb("HeapSize %p = %u bytes", arg, HeapSize(GetProcessHeap(), 0, arg));
+				HeapFree(GetProcessHeap(), 0, arg);
+				// fdeb("freed %p OK", arg);
+			}
+			catch(...)
+			{
+				OutputDebugString("edeb except");
+				fdeb("exception while acesing deb buf @ %p ?len = %d", arg, (int)arg2);
+			}
+			break;
+
+		case E_APP:
+			try
+			{
+
+				if (formshown)
+				{
+					static DWORD prevticks = 0;
+					char f[1024];
+					sprintf(f, "%4d|%s", e.ticks - prevticks, arg);
+					prevticks = e.ticks;
+					Form1->deblog->AddItem((char*)f, 0);
+					Form1->deblog->Scroll(0, 25);
+					// Form1->deblog->Repaint();
+					Application->ProcessMessages();
+				}
+
+				// fdeb("freeing %p [%d bytes]", arg, (int)arg2);
+				// fdeb("HeapSize %p = %u bytes", arg, HeapSize(GetProcessHeap(), 0, arg));
+				HeapFree(GetProcessHeap(), 0, arg);
+				// fdeb("freed %p OK", arg);
+			}
+			catch(...)
+			{
+				fdeb("exception while acesing deb buf @ %p len = %d", arg, (int)arg2);
+			}
+
+			break;
+		case E_RESOLVEERR:
+			deb("resolve error: %s [%s]", arg, arg2);
+			break;
+		case E_FTPAUTHERR:
+			deb("auth error: %s", arg);
+			break;
+		case E_DEVMSG:
+			if (!arg)
+				break;
+			// if (showdev)
+			// if(Form1->dev->Checked)
+			if (Form1->dev->Checked)
+				deb("%s", arg);
+			HeapFree(GetProcessHeap(), 0, arg);
+			break;
+
+		case E_FTPCONTROL:
+			if (!arg)
+				break;
+			// if (showdev)
+			// if(Form1->dev->Checked)
+			deb("%s", arg);
+			HeapFree(GetProcessHeap(), 0, arg);
+			break;
+
+		case E_CACHEFREED:
+			if (showcachedeb)
+				deb("cache: freed %p. %lu bytes of '%s' @ %lu, cacherecs: %d", arg, arg3, arg2, arg4, arg5);
+			break;
+		case E_STARTPRECACHE:
+			// if (showcachedeb)
+			// deb("precaching '%s' @ %lu (%.2f KB) ...", arg, arg3,
+			// (double)(((double)(unsigned long)arg2) / (double)1024.0));
+			break;
+		case E_CACHESEQDETECT:
+			if (showcachedeb)
+				deb("sequential read '%s' accesses %lu offset %lu [readlen %lu | file size %.2f MB]", arg,
+				arg5, (unsigned long)arg2, arg3, ((double)(unsigned long)arg4) / (double)1024.0 / (double)
+				1024.0);
+			break;
+		case E_CACHEHIT:
+			if (showcachedeb)
+				deb("%04X cache hit for '%s' %7lu bytes @ %8lu", arg4, arg, arg3, arg2);
+			break;
+		case E_CACHEMISS:
+			if (showcachedeb)
+				deb("%04X cache miss for '%s' %7lu bytes @ %8lu", arg4, arg, arg3, arg2);
+			break;
+		case E_CACHEMSG:
+			if (showcachedeb)
+				deb("%s", arg);
+			HeapFree(GetProcessHeap(), 0, arg);
+			break;
+
+		case E_PRECACHED:
+			// if (showcachedeb)
+			// deb("precached %.2f KB @ %9lu of '%s'", (double)((double)((unsigned long)arg5) / (double)1024.0), arg3,
+			// arg2);
+			break;
+		case E_FATWRITEFILE:
+			deb("e_fatwritefile %s, %lu", arg, arg2);
+			x = (double)arg2;
+			x =  ((double)x / (double)1024 / (double)1024);
+			if (x >= 2.0)
+				deb("%s, %.2f MB, %lu clusters", arg, x, (unsigned long)arg2 / 16384);
+			HeapFree(GetProcessHeap(), 0, arg);
+			break;
+		case E_FATSCANDIR:
+			if (strlen((char*)arg))
+				deb("[%s]", arg);
+			break;
+		case E_DIRREAD:
+			if (Form1->disk->Checked)
+				deb("Dir  read '%s' @ 0x%08p, offset %lu, length %lu [stofs %lu enofs %lu]", arg,
+				(unsigned long)arg2, (unsigned long)arg3, arg4, arg5, arg6);
+			break;
+		case E_DIRWRITE:
+		case E_FILEWRITE:
+		case E_FILEREAD:
+			if (Form1->disk->Checked)
+				deb("File %s '%s' @ %lu %lu", (type == E_FILEWRITE || type == E_DIRWRITE) ? "write" : "read",
+				arg, (unsigned long)arg3, arg4);
+			break;
+		case E_FTPREADLINE:
+			Form1->rlimg->Visible = false;
+			break;
+		case E_FTPREADINGLINE:
+			Form1->rlimg->Visible = true;
+			break;
+
+		case E_DISKWRITE:
+			if (Form1->disk->Checked && Form1->dev->Checked)
+				deb("OnWrite(Buffer=0x%08x, Length=%lu, Offset=%lu, Paging=%d)", arg, (unsigned long)arg2,
+				(unsigned long)arg3, arg4);
+			break;
+		case E_DISKREAD:
+			if (Form1->dev->Checked && Form1->dev->Checked)
+				deb("OnRead(Buffer=0x%08x, Length=%lu, Offset=%lu, Paging=%d)", arg, (unsigned long)arg2,
+				(unsigned long)arg3, arg4);
+			break;
+		case E_TIMEOUT:
+			deb(" \r\n \r\n [%s:%d] TIMEOUT!  \r\n %s \r\n ", arg, arg2, arg3);
+			Form1->timeout->Font->Color = clRed;
+			break;
+
+		case E_PASVCONNECTED:
+			// Form1->dwnimg->Visible = true;
+			Form1->pasvconnecting->Visible = false;
+			Form1->netspd->Font->Color = clWhite;
+			Form1->dwnimg->Visible = true;
+			pasvconnecttm = (int)arg;
+			break;
+		case E_PASVDISCONNECT:
+			Form1->dwnimg->Visible = false;
+			Form1->netspd->Font->Color = clSilver;
+			break;
+		case E_FTPGETFILE:
+			st = (unsigned long)arg2;
+			en = st + (unsigned long)arg4;
+
+			deb("ftpgetfile(%-15s, %13lu, %9lu) = %7lu (%9lu - %9lu) %4lu ms, ctrl: %4lu data: %4lu", arg,
+				arg2, arg4, arg7, st, en, (unsigned long)arg6 + (unsigned long)arg7, arg6, arg7);
+			break;
+
+		case E_PASVCONNECTING:
+			Form1->pasvconnecting->Visible = true;
+			Form1->pasvdone->Caption = "";
+			Form1->timeout->Font->Color = clYellow;
+			break;
+
+		case E_PASVREAD:
+			char su[111];
+
+			int readok, len, bufsiz;
+
+			readok = (int)arg;
+			len = (int)arg2;
+			bufsiz = (int)arg3;
+
+			if (!len || !bufsiz)
+				sprintf(su, "%d", readok);
+			else
+				sprintf(su, "%d %%", (int)ceil((((double)readok / (double)len) * (double)100)));
+			Form1->pasvdone->Caption = su;
+			// Form1->dwn->Visible = !Form1->dwn->Visible;
+			Form1->dwnimg->Stretch = !Form1->dwnimg->Stretch;
+			break;
+
+		case E_TIMEOUTCHANGE:
+			char str[51];
+
+			// if (!arg)
+			// break;
+			// if (GetTickCount() - tmctm > 50)
+			{
+
+				char ss[129];
+				tmtsum += (unsigned long)arg;
+
+				netspd = (double)((double)tmtsum / (double)1000.0);
+
+				sprintf(ss, "%.2f", (double)netspd);
+
+				Form1->timeout->Text = ss;
+				static double lastnetspd = 0;
+				static int decnum = 0;
+
+				if (lastnetspd <= netspd)
+				{
+					if (decnum++ >= 2 && netspd >= 2.0)
+						Form1->timeout->Font->Color = clRed;
+				}
+				else
+				{
+					Form1->timeout->Font->Color = clWhite;
+					decnum = 0;
+				}
+
+				lastnetspd = netspd;
+
+				ntmt = 1;
+				tmt = tmtsum = (unsigned long)arg;
+				tmctm = GetTickCount();
+			}
+			// else
+			// {
+			// tmtsum += (unsigned long)arg;
+			// tmt = tmtsum / ntmt;
+			//
+			// }
+			if (Form1->pasvconnecting->Visible && (DWORD)arg > (DWORD)pasvconnecttm)
+				Form1->timeout->Font->Color = clRed;
+
+			break;
+
+		case E_FTPCMD:
+			if (!showftptraff)
+				break;
+			s = (char*)arg;
+			s.Trim();
+
+			if (!s.Length())
+				break;
+
+			deb("%12s:%4d  # %s", arg3, arg4, s.c_str());
+			HeapFree(GetProcessHeap(), 0, arg);
+			break;
+
+		case E_SECOND:
+
+			char d[222];
+			sprintf(d, "%.2f", memmb / 1024.0 / 1024.0);
+			Form1->heapsizel->Text = d;
+			if (showevents)
+				deb("ftp alive event %8u", arg);
+			break;
+
+		case E_UNLOCKING:
+			if (showdev)
+				deb("unlocking %11s:%5d [locks:%3d]", arg, arg2, arg3);
+			break;
+		case E_UNLOCKED:
+			if (showdev)
+				deb("unlocked  %11s:%5d [locks:%3d]", arg, arg2, arg3);
+			break;
+		case E_LOCKING:
+			if (showdev)
+				deb("locking   %11s:%5d [locks:%3d]", arg, arg2, arg3);
+			break;
+		case E_LOCKED:
+			if (showdev)
+				deb("locked    %11s:%5d [locks:%3d]", arg, arg2, arg3);
+			break;
+
+		case E_FTPREPLY:
+
+			if (!showftptraff)
+				break;
+			s = (char*)arg;
+
+			s.Trim();
+
+			if (!s.Length())
+				break;
+			deb("%12s:%4d  > %s", arg3, arg4, s.c_str());
+			HeapFree(GetProcessHeap(), 0, arg);
+			break;
+		case E_SERVERBANNER:
+
+			s = (char*)arg;
+			s.Trim();
+			if (strlen(s.c_str()))
+				deb("%s", s.c_str());
+			HeapFree(GetProcessHeap(), 0, arg);
+			break;
+		case E_EXCEPTION:
+			deb("### EXCEPTION [ %s # %s():%d ]", arg, arg2, arg3);
+			deb("                %s", arg4);
+			break;
+
+		case E_FTPPASVERR:
+			deb("pasv_read: %s", arg);
+			break;
+
+		case E_FTPCONNECTED:
+			Form1->Caption = (char*)arg;
+
+			break;
+		case E_FTPDISCONNECT:
+			Form1->Caption = (char*)"<disconnected>";
+			break;
+
+		default:
+			// deb("event %d",type);
+			break;
+		}
+	}
+
+	catch(...)
+	{
+		deb("event exp!");
+		// exp;
+		// ExitProcess(0);
+	}
+	// fdeb("done event %d", type);
+}
+// ---------------------------------------------------------------------------

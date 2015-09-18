@@ -1,0 +1,21 @@
+// ---------------------------------------------------------------------------
+
+#ifndef EventThreadH
+#define EventThreadH
+// ---------------------------------------------------------------------------
+#include <Classes.hpp>
+
+// ---------------------------------------------------------------------------
+class EventThread : public TThread
+{
+protected:
+	void __fastcall Execute();
+
+public:
+	__fastcall EventThread(bool CreateSuspended);
+	void __fastcall Do(void);
+	TCriticalSection *evcs;
+	bool needevents;
+};
+// ---------------------------------------------------------------------------
+#endif

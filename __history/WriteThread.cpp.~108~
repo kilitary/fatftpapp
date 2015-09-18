@@ -1,0 +1,143 @@
+// ---------------------------------------------------------------------------
+#include "FileCheck.h"
+#include "main.h"
+#include "functions.h"
+
+#include <stdio.h>
+#include <vcl.h>
+#pragma hdrstop
+
+#include "WriteThread.h"
+#pragma package(smart_init)
+// ---------------------------------------------------------------------------
+
+// Important: Methods and properties of objects in VCL can only be
+// used in a method called using Synchronize, for example:
+//
+// Synchronize(&UpdateCaption);
+//
+// where UpdateCaption could look like:
+//
+// void __fastcall WriteThread::UpdateCaption()
+// {
+// Form1->Caption = "Updated in a thread";
+// }
+// ---------------------------------------------------------------------------
+
+__fastcall WriteThread::WriteThread(bool CreateSuspended, bool how) : TThread(CreateSuspended)
+{
+	stress = how;
+}
+
+// ---------------------------------------------------------------------------
+void __fastcall WriteThread::Execute()
+{
+	NameThreadForDebugging("WriteThread");
+	srand(time(NULL) + GetCurrentThreadId());
+	unsigned long size = rand() * (rand() % 117);
+	int numfiles = 0;
+	char xxx[111];
+	deunicode(Form1->writestressfiles->Text.c_str(), xxx, sizeof(xxx));
+	numfiles = atoi(xxx);
+
+	if (!stress)
+	{
+
+		while (numfiles--)
+		{
+			HANDLE h;
+			char fn[255] = "";
+			char alp[] = "QWERTYUIOPASDFGHJKLZXCVBNMqwertyuiopasdfghjklzxcvbnm1234567890";
+			memset(fn, 0, sizeof(fn));
+			strcpy(fn, "y:\\");
+
+			for (int i = 3; i < 10; i++)
+				fn[i] = alp[rand() % sizeof(alp)];
+
+			strcat(fn, ".dat");
+			deb("fn %s %lu", fn, size);
+			h = CreateFile(fn, GENERIC_WRITE, 0, 0, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+			// |  |FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH
+			if (h == INVALID_HANDLE_VALUE)
+			{
+				deb("WriteThread createfile %s", fmterr());
+				return;
+			}
+
+			char *data;
+			data = (char*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, (unsigned long)size + 131072);
+			unsigned char nextb = 1;
+			for (int i = 0; i < size; i++)
+			{
+				data[i] = nextb;
+				if (nextb++ >= 255)
+					nextb = 1;
+			}
+			strcat(data, " end.");
+			DWORD dwWrite = 0;
+
+			if (!WriteFile(h, data, (unsigned long)strlen(data), &dwWrite, 0))
+				deb("write %s", fmterr());
+			HeapFree(GetProcessHeap(), 0, data);
+			CloseHandle(h);
+		}
+	}
+	else
+	{
+
+		HANDLE fh;
+		WIN32_FIND_DATAA fd;
+		char *d;
+
+		d = "c:\\temp\\garbage\\*.*";
+
+		memset(&fd, 0x0, sizeof(fd));
+		fh = FindFirstFileA(d, &fd);
+
+		if (fh == INVALID_HANDLE_VALUE)
+		{
+			deb("no  found");
+			return;
+		}
+
+		int nfiles = 0;
+		char fn[MAX_PATH];
+		int nloaded = 0;
+		do
+		{
+			if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+				continue;
+
+			try
+			{
+				char src[255];
+				char dest[255];
+
+				sprintf(src, "%s%s", "c:\\temp\\garbage\\", fd.cFileName);
+				sprintf(dest, "y:\\%s", fd.cFileName);
+
+				deb("copying %20s %lu bytes ...", src, fd.nFileSizeLow);
+				DWORD st = GetTickCount();
+				if (!CopyFile(src, dest, 0))
+					deb("CopyFile(%s, %s): %s", src, dest, fmterr());
+				else
+					deb("copy %lu bytes of %s OK in %d ms", fd.nFileSizeLow, src, GetTickCount() - st);
+
+				readdisk();
+				nfiles++;
+				if (nfiles >=numfiles)
+					break;
+			}
+
+			catch(...)
+			{
+				deb(" code exception catched on %s", fn);
+			}
+		}
+		while (FindNextFileA(fh, &fd));
+		deb("done write %d files", nfiles);
+	}
+
+	// deb("done write");
+}
+// ---------------------------------------------------------------------------
